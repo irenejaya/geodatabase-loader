@@ -38,11 +38,11 @@ from qgis.core import (
 
 LOG_TAG = "GDB Loader"
 ICON_PATH = os.path.join(os.path.dirname(__file__), "icon.svg")
-# Qgis.Warning was removed in QGIS 4 (Qt6); the scoped enum works in 3.30+
+# Scoped enum (3.30+/QGIS 4); legacy flat name is looked up dynamically for 3.22-3.28
 try:
     LOG_WARNING = Qgis.MessageLevel.Warning
 except AttributeError:
-    LOG_WARNING = Qgis.Warning
+    LOG_WARNING = getattr(Qgis, "Warning")
 
 
 def is_dark_palette(widget: QWidget) -> bool:
@@ -729,9 +729,9 @@ class GeodatabaseLoaderDialog(QDialog):
             return
 
         # Summarise
-        ds_names = {l["dataset"] for l in self.layer_list if l["dataset"]}
-        spatial = sum(1 for l in self.layer_list if l["geom_type"] != "Table")
-        tables = sum(1 for l in self.layer_list if l["geom_type"] == "Table")
+        ds_names = {info["dataset"] for info in self.layer_list if info["dataset"]}
+        spatial = sum(1 for info in self.layer_list if info["geom_type"] != "Table")
+        tables = sum(1 for info in self.layer_list if info["geom_type"] == "Table")
         summary_parts = [f"{len(self.layer_list)} layer(s)"]
         if ds_names:
             summary_parts.append(f"{len(ds_names)} Feature Dataset(s)")
