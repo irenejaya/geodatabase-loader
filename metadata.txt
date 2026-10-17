@@ -1,0 +1,27 @@
+[general]
+name=Geodatabase Loader
+qgisMinimumVersion=3.22
+qgisMaximumVersion=4.99
+description=Load Esri File Geodatabases (.gdb) into QGIS, preserving Feature Datasets as layer-tree groups.
+about=Browse to a .gdb folder, scan it with the GDAL OpenFileGDB driver, tick the layers/tables you want and load them. Feature Datasets become sub-groups under a group named after the geodatabase. Works with light and dark QGIS themes.
+
+version=1.0.0
+author=Irene Jaya
+email=irenejaya1@gmail.com
+
+category=Vector
+tags=geodatabase,gdb,filegdb,esri,loader,feature dataset,openfilegdb
+
+icon=icon.svg
+supportsQt6=True
+
+experimental=False
+deprecated=False
+hasProcessingProvider=no
+server=False
+
+changelog=
+    1.0.0 - Initial plugin release
+        * Toolbar button and Plugins menu entry
+        * Dark-mode friendly colours
+        * New geodatabase window and toolbar icon

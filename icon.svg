@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- database cylinder -->
+  <path d="M8 14 v28 c0 5.5 10.7 10 24 10 s24 -4.5 24 -10 v-28 z" fill="#1f6f9f"/>
+  <path d="M8 28 c0 5.5 10.7 10 24 10 s24 -4.5 24 -10" fill="none" stroke="#9fd3f2" stroke-width="2"/>
+  <path d="M8 40 c0 5.5 10.7 10 24 10 s24 -4.5 24 -10" fill="none" stroke="#9fd3f2" stroke-width="2"/>
+  <ellipse cx="32" cy="14" rx="24" ry="10" fill="#4fb3e8" stroke="#9fd3f2" stroke-width="2"/>
+  <!-- load arrow badge -->
+  <circle cx="48" cy="46" r="13" fill="#2ea043" stroke="#ffffff" stroke-width="2"/>
+  <path d="M48 38 v14 M41.5 46 l6.5 6.5 l6.5 -6.5" fill="none" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
