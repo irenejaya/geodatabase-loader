@@ -335,6 +335,7 @@ class GeodatabaseLoaderDialog(QDialog):
         super().__init__(parent)
 
         self.setWindowTitle("Geodatabase Loader")
+        self.setModal(False)
         self.setWindowIcon(QIcon(ICON_PATH))
         self.resize(1100, 650)
         self.setMinimumWidth(900)
