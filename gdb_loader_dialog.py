@@ -9,7 +9,8 @@ Features:
 - Enumerate layers using the OpenFileGDB driver (GDAL ≥ 3.4
   Group API for Feature Dataset detection, with fallback)
 - Display layers in a tree grouped by Feature Dataset
-- Select / deselect individual layers to load
+- Select / deselect / toggle individual layers to load
+- Filter the layer list by name
 - Creates a group per Feature Dataset in the QGIS layer tree
 - Layers outside any Feature Dataset go under the .gdb root group
 - Background loading with progress reporting
@@ -34,6 +35,7 @@ from qgis.core import (
     QgsApplication, QgsProject, QgsVectorLayer,
     QgsMessageLog, Qgis, QgsLayerTreeGroup,
 )
+from qgis.gui import QgsFilterLineEdit
 
 
 LOG_TAG = "GDB Loader"
@@ -338,12 +340,12 @@ class GeodatabaseLoaderDialog(QDialog):
         self.setWindowIcon(QIcon(ICON_PATH))
         self.resize(1100, 650)
         self.setMinimumWidth(900)
-        self.setMaximumWidth(1200)
 
         # State
         self.gdb_path: Optional[str] = None
         self.layer_list: List[Dict] = []  # result of enumerate_gdb_layers
         self._summary_state = "idle"  # idle | found | empty
+        self._bulk_update = False  # suppress per-item refresh during bulk checks
 
         self._build_ui()
         self._wire_signals()
@@ -558,6 +560,17 @@ class GeodatabaseLoaderDialog(QDialog):
         self.summary_label.setWordWrap(True)
         layout.addWidget(self.summary_label)
 
+        # Name filter
+        self.filter_edit = QgsFilterLineEdit()
+        self.filter_edit.setShowSearchIcon(True)
+        self.filter_edit.setPlaceholderText("Search feature class name…")
+        self.filter_edit.setToolTip(
+            "Show only layers whose name (or Feature Dataset name) "
+            "contains this text. Case-insensitive."
+        )
+        self.filter_edit.setEnabled(False)
+        layout.addWidget(self.filter_edit)
+
         # Layer tree
         self.layer_tree = QTreeWidget()
         self.layer_tree.setHeaderLabels(["Layer", "Type", "Features", "CRS"])
@@ -571,11 +584,14 @@ class GeodatabaseLoaderDialog(QDialog):
             "Check/uncheck layers to select them for loading"
         )
 
+        # Layer column takes all remaining space; Type / Features / CRS are
+        # kept compact (Features and CRS share the same width).
         header = self.layer_tree.header()
+        header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        for col in (1, 2, 3):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self._resize_columns()
 
         layout.addWidget(self.layer_tree)
 
@@ -591,6 +607,11 @@ class GeodatabaseLoaderDialog(QDialog):
         self.select_none_btn.setEnabled(False)
         sel_row.addWidget(self.select_none_btn)
 
+        self.toggle_btn = QPushButton("Toggle Selection")
+        self.toggle_btn.setToolTip("Invert the check state of the shown layers")
+        self.toggle_btn.setEnabled(False)
+        sel_row.addWidget(self.toggle_btn)
+
         sel_row.addStretch()
 
         self.count_label = QLabel("")
@@ -604,8 +625,8 @@ class GeodatabaseLoaderDialog(QDialog):
     # ------------------------------------------------------------------
     def _create_options_group(self) -> QGroupBox:
         group = QGroupBox("Options")
-        layout = QVBoxLayout()
-        layout.setSpacing(6)
+        layout = QHBoxLayout()
+        layout.setSpacing(16)
 
         self.non_spatial_check = QCheckBox("Include non-spatial tables")
         self.non_spatial_check.setChecked(False)
@@ -615,9 +636,7 @@ class GeodatabaseLoaderDialog(QDialog):
         )
         layout.addWidget(self.non_spatial_check)
 
-        self.group_check = QCheckBox(
-            "Create layer-tree groups for Feature Datasets"
-        )
+        self.group_check = QCheckBox("Create Feature Dataset groups")
         self.group_check.setChecked(True)
         self.group_check.setToolTip(
             "When checked, a group hierarchy matching the geodatabase "
@@ -633,6 +652,7 @@ class GeodatabaseLoaderDialog(QDialog):
             "Expand the created layer-tree groups after loading."
         )
         layout.addWidget(self.expand_check)
+        layout.addStretch()
 
         group.setLayout(layout)
         return group
@@ -662,7 +682,9 @@ class GeodatabaseLoaderDialog(QDialog):
 
         self.select_all_btn.clicked.connect(self._check_all)
         self.select_none_btn.clicked.connect(self._uncheck_all)
+        self.toggle_btn.clicked.connect(self._toggle_all)
         self.layer_tree.itemChanged.connect(self._on_tree_changed)
+        self.filter_edit.textChanged.connect(self._apply_filter)
 
         self.non_spatial_check.stateChanged.connect(
             lambda _: self._rescan_if_loaded()
@@ -721,8 +743,7 @@ class GeodatabaseLoaderDialog(QDialog):
             )
             self._summary_state = "empty"
             self._apply_theme()
-            self.select_all_btn.setEnabled(False)
-            self.select_none_btn.setEnabled(False)
+            self._set_tree_controls_enabled(False)
             self._log("⚠️ No layers found in geodatabase")
             self._update_count()
             self._validate()
@@ -750,9 +771,10 @@ class GeodatabaseLoaderDialog(QDialog):
         tree = build_gdb_tree(self.layer_list)
         self._populate_tree(None, tree)
         self.layer_tree.expandAll()
+        self._resize_columns()
+        self._apply_filter(self.filter_edit.text())
 
-        self.select_all_btn.setEnabled(True)
-        self.select_none_btn.setEnabled(True)
+        self._set_tree_controls_enabled(True)
 
         self._log(f"✅ Found {len(self.layer_list)} layer(s)")
         if ds_names:
@@ -806,6 +828,9 @@ class GeodatabaseLoaderDialog(QDialog):
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
         item.setCheckState(0, Qt.CheckState.Checked)
         item.setData(0, Qt.ItemDataRole.UserRole, lyr)  # store full dict
+        item.setToolTip(0, lyr["name"])
+        if crs_str:
+            item.setToolTip(3, crs_str)
 
         # QGIS native icon based on base geometry family
         family = lyr.get("geom_base", "unknown")
@@ -839,27 +864,111 @@ class GeodatabaseLoaderDialog(QDialog):
             _walk(self.layer_tree.topLevelItem(i))
         return checked
 
-    def _check_all(self):
+    def _iter_layer_items(self, visible_only: bool = False):
+        """Yield every layer (leaf) item, optionally skipping filtered-out ones."""
+        def _walk(item):
+            if visible_only and item.isHidden():
+                return
+            if item.childCount() == 0:
+                if item.data(0, Qt.ItemDataRole.UserRole):
+                    yield item
+            else:
+                for i in range(item.childCount()):
+                    yield from _walk(item.child(i))
+
         for i in range(self.layer_tree.topLevelItemCount()):
-            item = self.layer_tree.topLevelItem(i)
-            if item:
-                item.setCheckState(0, Qt.CheckState.Checked)
+            yield from _walk(self.layer_tree.topLevelItem(i))
+
+    def _set_check_states(self, new_state_for):
+        """Apply ``new_state_for(item)`` to every shown layer item in one pass."""
+        self._bulk_update = True
+        try:
+            for item in list(self._iter_layer_items(visible_only=True)):
+                item.setCheckState(0, new_state_for(item))
+        finally:
+            self._bulk_update = False
+        self._update_count()
+
+    def _check_all(self):
+        self._set_check_states(lambda _item: Qt.CheckState.Checked)
 
     def _uncheck_all(self):
+        self._set_check_states(lambda _item: Qt.CheckState.Unchecked)
+
+    def _toggle_all(self):
+        self._set_check_states(
+            lambda item: Qt.CheckState.Unchecked
+            if item.checkState(0) == Qt.CheckState.Checked
+            else Qt.CheckState.Checked
+        )
+
+    def _set_tree_controls_enabled(self, enabled: bool):
+        self.select_all_btn.setEnabled(enabled)
+        self.select_none_btn.setEnabled(enabled)
+        self.toggle_btn.setEnabled(enabled)
+        self.filter_edit.setEnabled(enabled)
+
+    def _apply_filter(self, text: str):
+        """Hide layers whose name doesn't contain ``text`` (case-insensitive).
+
+        A Feature Dataset whose own name matches keeps all of its layers.
+        """
+        needle = text.strip().lower()
+
+        def _filter(item, parent_match: bool) -> bool:
+            name_match = not needle or needle in item.text(0).lower()
+            if item.childCount() == 0:
+                visible = parent_match or name_match
+            else:
+                visible = False
+                for i in range(item.childCount()):
+                    if _filter(item.child(i), parent_match or name_match):
+                        visible = True
+            item.setHidden(not visible)
+            return visible
+
         for i in range(self.layer_tree.topLevelItemCount()):
-            item = self.layer_tree.topLevelItem(i)
-            if item:
-                item.setCheckState(0, Qt.CheckState.Unchecked)
+            _filter(self.layer_tree.topLevelItem(i), False)
+        self._update_count()
+
+    def _resize_columns(self):
+        """Keep Type / Features / CRS compact so the Layer column gets the rest.
+
+        Features and CRS share one width that fits their widest value.
+        """
+        fm = self.layer_tree.fontMetrics()
+        pad = 24
+
+        def _w(texts) -> int:
+            return max(fm.horizontalAdvance(t) for t in texts) + pad
+
+        types = ["Type", "Feature Dataset", "MultiPolygon Z"]
+        numeric = ["Features", "CRS", "99,999,999", "EPSG:7855"]
+        for info in self.layer_list:
+            types.append(info["geom_type"])
+            fc = info["feat_count"]
+            numeric.append(f"{fc:,}" if fc >= 0 else "?")
+            numeric.append(info.get("crs", ""))
+
+        num_w = min(_w(numeric), _w(["EPSG:999999"]) * 2)
+        self.layer_tree.setColumnWidth(1, _w(types))
+        self.layer_tree.setColumnWidth(2, num_w)
+        self.layer_tree.setColumnWidth(3, num_w)
 
     def _on_tree_changed(self, _item, _col):
+        if self._bulk_update:
+            return
         self._update_count()
-        self._validate()
 
     def _update_count(self):
         total = len(self.layer_list)
         checked = len(self._get_checked_layers())
         if total > 0:
-            self.count_label.setText(f"{checked} of {total} selected")
+            text = f"{checked} of {total} selected"
+            if self.filter_edit.text().strip():
+                shown = sum(1 for _ in self._iter_layer_items(visible_only=True))
+                text = f"{shown} shown  ·  {text}"
+            self.count_label.setText(text)
             if checked == 0:
                 color = self._warn_color()
             elif checked == total:
