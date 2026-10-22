@@ -608,7 +608,10 @@ class GeodatabaseLoaderDialog(QDialog):
         sel_row.addWidget(self.select_none_btn)
 
         self.toggle_btn = QPushButton("Toggle Selection")
-        self.toggle_btn.setToolTip("Invert the check state of the shown layers")
+        self.toggle_btn.setToolTip(
+            "Tick the highlighted rows, or untick them if they are all "
+            "ticked (Ctrl/Shift-click to highlight several rows)"
+        )
         self.toggle_btn.setEnabled(False)
         sel_row.addWidget(self.toggle_btn)
 
@@ -682,7 +685,8 @@ class GeodatabaseLoaderDialog(QDialog):
 
         self.select_all_btn.clicked.connect(self._check_all)
         self.select_none_btn.clicked.connect(self._uncheck_all)
-        self.toggle_btn.clicked.connect(self._toggle_all)
+        self.toggle_btn.clicked.connect(self._toggle_selected)
+        self.layer_tree.itemSelectionChanged.connect(self._update_toggle_enabled)
         self.layer_tree.itemChanged.connect(self._on_tree_changed)
         self.filter_edit.textChanged.connect(self._apply_filter)
 
@@ -879,34 +883,66 @@ class GeodatabaseLoaderDialog(QDialog):
         for i in range(self.layer_tree.topLevelItemCount()):
             yield from _walk(self.layer_tree.topLevelItem(i))
 
-    def _set_check_states(self, new_state_for):
-        """Apply ``new_state_for(item)`` to every shown layer item in one pass."""
+    def _selected_layer_items(self) -> List[QTreeWidgetItem]:
+        """Shown layer items in the highlighted rows; a highlighted Feature
+        Dataset row contributes its shown layers."""
+        items: List[QTreeWidgetItem] = []
+        seen = set()
+
+        def _add(item):
+            if item.isHidden():
+                return
+            if item.childCount() == 0:
+                if item.data(0, Qt.ItemDataRole.UserRole) and id(item) not in seen:
+                    seen.add(id(item))
+                    items.append(item)
+            else:
+                for i in range(item.childCount()):
+                    _add(item.child(i))
+
+        for item in self.layer_tree.selectedItems():
+            _add(item)
+        return items
+
+    def _set_check_states(self, state, items=None):
+        """Set ``state`` on ``items`` (default: every shown layer) in one pass."""
+        if items is None:
+            items = list(self._iter_layer_items(visible_only=True))
         self._bulk_update = True
         try:
-            for item in list(self._iter_layer_items(visible_only=True)):
-                item.setCheckState(0, new_state_for(item))
+            for item in items:
+                item.setCheckState(0, state)
         finally:
             self._bulk_update = False
         self._update_count()
 
     def _check_all(self):
-        self._set_check_states(lambda _item: Qt.CheckState.Checked)
+        self._set_check_states(Qt.CheckState.Checked)
 
     def _uncheck_all(self):
-        self._set_check_states(lambda _item: Qt.CheckState.Unchecked)
+        self._set_check_states(Qt.CheckState.Unchecked)
 
-    def _toggle_all(self):
-        self._set_check_states(
-            lambda item: Qt.CheckState.Unchecked
-            if item.checkState(0) == Qt.CheckState.Checked
-            else Qt.CheckState.Checked
+    def _toggle_selected(self):
+        """Tick the highlighted rows, or untick them if they are all ticked."""
+        items = self._selected_layer_items()
+        if not items:
+            return
+        all_checked = all(
+            item.checkState(0) == Qt.CheckState.Checked for item in items
         )
+        self._set_check_states(
+            Qt.CheckState.Unchecked if all_checked else Qt.CheckState.Checked,
+            items,
+        )
+
+    def _update_toggle_enabled(self):
+        self.toggle_btn.setEnabled(bool(self._selected_layer_items()))
 
     def _set_tree_controls_enabled(self, enabled: bool):
         self.select_all_btn.setEnabled(enabled)
         self.select_none_btn.setEnabled(enabled)
-        self.toggle_btn.setEnabled(enabled)
         self.filter_edit.setEnabled(enabled)
+        self._update_toggle_enabled()
 
     def _apply_filter(self, text: str):
         """Hide layers whose name doesn't contain ``text`` (case-insensitive).
@@ -930,6 +966,7 @@ class GeodatabaseLoaderDialog(QDialog):
         for i in range(self.layer_tree.topLevelItemCount()):
             _filter(self.layer_tree.topLevelItem(i), False)
         self._update_count()
+        self._update_toggle_enabled()
 
     def _resize_columns(self):
         """Keep Type / Features / CRS compact so the Layer column gets the rest.
