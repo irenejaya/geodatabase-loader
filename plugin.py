@@ -49,6 +49,9 @@ class GeodatabaseLoaderPlugin:
     def run(self):
         from .gdb_loader_dialog import GeodatabaseLoaderDialog
 
+        # Always start from a blank dialog: drop any previous instance so no
+        # earlier .gdb path, layer list or log carries over.
+        self._discard_dialog()
         try:
             # Modeless: the map canvas stays interactive while the dialog is open
             if self.dlg is None:
@@ -63,3 +66,10 @@ class GeodatabaseLoaderPlugin:
                 "Geodatabase Loader", f"Failed to launch: {exc}"
             )
             traceback.print_exc()
+        finally:
+            self._discard_dialog()
+
+    def _discard_dialog(self):
+        if self.dlg is not None:
+            self.dlg.deleteLater()
+            self.dlg = None
