@@ -53,8 +53,13 @@ class GeodatabaseLoaderPlugin:
         # earlier .gdb path, layer list or log carries over.
         self._discard_dialog()
         try:
-            self.dlg = GeodatabaseLoaderDialog(self.iface.mainWindow())
-            self.dlg.exec()
+            # Modeless: the map canvas stays interactive while the dialog is open
+            if self.dlg is None:
+                self.dlg = GeodatabaseLoaderDialog(self.iface.mainWindow())
+                self.dlg.setModal(False)
+            self.dlg.show()
+            self.dlg.raise_()
+            self.dlg.activateWindow()
         except Exception as exc:
             import traceback
             self.iface.messageBar().pushCritical(
