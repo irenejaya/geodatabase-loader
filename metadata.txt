@@ -26,6 +26,8 @@ server=False
 
 changelog=
     1.2 - UI Improvements
+        * Windows Explorer style (natural, case-insensitive) sorting of layers and Feature Datasets
+        * Non-spatial tables are listed by default
     1.1 - UI improvements
         * Search box to filter layers by feature class / Feature Dataset name
         * Toggle Selection button next to Uncheck All

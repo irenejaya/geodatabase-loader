@@ -18,6 +18,7 @@ Features:
 """
 
 import os
+import re
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 
@@ -59,6 +60,29 @@ def is_dark_palette(widget: QWidget) -> bool:
 def format_timestamp() -> str:
     """Return formatted timestamp for logging."""
     return datetime.now().strftime("%H:%M:%S")
+
+
+_DIGITS_RE = re.compile(r"[0-9]+")
+
+
+def natural_sort_key(text: str) -> Tuple:
+    """Sort key that orders names the way Windows Explorer does.
+
+    - case-insensitive ("uncategorised" sorts with "UG_..." / "WATERWAYS")
+    - runs of digits compare by value ("2PCT" < "10PCT")
+    - punctuation such as "_" or "-" sorts before digits, digits before letters
+    """
+    tokens = []
+    pos = 0
+    for m in _DIGITS_RE.finditer(text):
+        for ch in text[pos:m.start()]:
+            tokens.append((2, ch.casefold()) if ch.isalpha() else (0, ord(ch)))
+        tokens.append((1, int(m.group()), len(m.group())))
+        pos = m.end()
+    for ch in text[pos:]:
+        tokens.append((2, ch.casefold()) if ch.isalpha() else (0, ord(ch)))
+    # Original text as tie-breaker keeps the order stable for e.g. "A1" / "a1"
+    return tuple(tokens), text
 
 
 def enumerate_gdb_layers(
@@ -152,7 +176,7 @@ def enumerate_gdb_layers(
 
         ds = gdal.OpenEx(
             norm_path, gdal.OF_VECTOR,
-            open_options=["DRIVER=OpenFileGDB"],
+            allowed_drivers=["OpenFileGDB"],
         )
         if ds is None:
             # Retry without explicit driver hint
@@ -229,7 +253,13 @@ def enumerate_gdb_layers(
 
                 ds = None
                 if results:
-                    return sorted(results, key=lambda r: (r["dataset"] or "", r["name"]))
+                    return sorted(
+                        results,
+                        key=lambda r: (
+                            natural_sort_key(r["dataset"] or ""),
+                            natural_sort_key(r["name"]),
+                        ),
+                    )
 
             # --- Group API unavailable – flat enumeration ---
             for i in range(ds.GetLayerCount() if ds else 0):
@@ -255,7 +285,7 @@ def enumerate_gdb_layers(
             if ds:
                 ds = None
             if results:
-                return sorted(results, key=lambda r: r["name"])
+                return sorted(results, key=lambda r: natural_sort_key(r["name"]))
 
     except Exception as exc:
         QgsMessageLog.logMessage(
@@ -303,7 +333,7 @@ def enumerate_gdb_layers(
             LOG_TAG, LOG_WARNING,
         )
 
-    return sorted(results, key=lambda r: r["name"])
+    return sorted(results, key=lambda r: natural_sort_key(r["name"]))
 
 
 def build_gdb_tree(layers: List[Dict]) -> Dict:
@@ -632,7 +662,7 @@ class GeodatabaseLoaderDialog(QDialog):
         layout.setSpacing(16)
 
         self.non_spatial_check = QCheckBox("Include non-spatial tables")
-        self.non_spatial_check.setChecked(False)
+        self.non_spatial_check.setChecked(True)
         self.non_spatial_check.setToolTip(
             "When checked, non-spatial (attribute-only) tables are "
             "also listed and can be loaded."
@@ -782,7 +812,7 @@ class GeodatabaseLoaderDialog(QDialog):
 
         self._log(f"✅ Found {len(self.layer_list)} layer(s)")
         if ds_names:
-            self._log(f"   Feature Datasets: {', '.join(sorted(ds_names))}")
+            self._log(f"   Feature Datasets: {', '.join(sorted(ds_names, key=natural_sort_key))}")
         self._update_count()
         self._validate()
 
@@ -791,9 +821,11 @@ class GeodatabaseLoaderDialog(QDialog):
     # ==================================================================
     def _populate_tree(self, parent, tree_dict: Dict):
         """Recursively populate the QTreeWidget from the nested dict."""
-        for key, subtree in sorted(tree_dict.items()):
-            if key == "_layers":
-                continue
+        datasets = sorted(
+            (k for k in tree_dict if k != "_layers"), key=natural_sort_key
+        )
+        for key in datasets:
+            subtree = tree_dict[key]
             folder_item = self._make_folder_item(key)
             if parent is None:
                 self.layer_tree.addTopLevelItem(folder_item)
