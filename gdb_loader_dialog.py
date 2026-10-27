@@ -376,6 +376,7 @@ class GeodatabaseLoaderDialog(QDialog):
         self.layer_list: List[Dict] = []  # result of enumerate_gdb_layers
         self._summary_state = "idle"  # idle | found | empty
         self._bulk_update = False  # suppress per-item refresh during bulk checks
+        self._loading = False  # True while layers are being added to the project
 
         self._build_ui()
         self._wire_signals()
@@ -1054,7 +1055,8 @@ class GeodatabaseLoaderDialog(QDialog):
     # ==================================================================
     def _validate(self):
         ok = (
-            self.gdb_path is not None
+            not self._loading
+            and self.gdb_path is not None
             and os.path.isdir(self.gdb_path or "")
             and len(self._get_checked_layers()) > 0
         )
@@ -1063,7 +1065,24 @@ class GeodatabaseLoaderDialog(QDialog):
     # ==================================================================
     # LOADING
     # ==================================================================
+    def reject(self):
+        # Close / Esc / window X all end up here; keep the dialog open while
+        # a load is running so it isn't deleted mid-loop.
+        if self._loading:
+            return
+        super().reject()
+
     def _run_load(self):
+        self._loading = True
+        self.close_btn.setEnabled(False)
+        try:
+            self._load_selected()
+        finally:
+            self._loading = False
+            self.close_btn.setEnabled(True)
+            self._validate()
+
+    def _load_selected(self):
         selected = self._get_checked_layers()
         if not selected:
             QMessageBox.warning(self, "Nothing selected", "Select at least one layer.")
