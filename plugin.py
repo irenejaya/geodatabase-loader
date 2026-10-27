@@ -42,29 +42,35 @@ class GeodatabaseLoaderPlugin:
         if self.toolbar is not None:
             self.toolbar.deleteLater()
             self.toolbar = None
-        if self.dlg is not None:
-            self.dlg.close()
-            self.dlg = None
+        self._discard_dialog()
 
     def run(self):
         from .gdb_loader_dialog import GeodatabaseLoaderDialog
 
-        # Always start from a blank dialog: drop any previous instance so no
-        # earlier .gdb path, layer list or log carries over.
-        self._discard_dialog()
+        # Already open: just bring the floating window to the front.
+        if self.dlg is not None:
+            self.dlg.showNormal()
+            self.dlg.raise_()
+            self.dlg.activateWindow()
+            return
+
         try:
+            # Modeless: QGIS (map canvas, Browser, layers) stays usable while
+            # the dialog is open. A new dialog is built on every open and
+            # discarded on close, so no earlier .gdb carries over.
             self.dlg = GeodatabaseLoaderDialog(self.iface.mainWindow())
-            self.dlg.exec()
+            self.dlg.finished.connect(self._discard_dialog)
+            self.dlg.show()
         except Exception as exc:
             import traceback
             self.iface.messageBar().pushCritical(
                 "Geodatabase Loader", f"Failed to launch: {exc}"
             )
             traceback.print_exc()
-        finally:
             self._discard_dialog()
 
-    def _discard_dialog(self):
+    def _discard_dialog(self, *_):
         if self.dlg is not None:
-            self.dlg.deleteLater()
-            self.dlg = None
+            dlg, self.dlg = self.dlg, None
+            dlg.hide()
+            dlg.deleteLater()
